@@ -34,12 +34,10 @@ fn main() -> ! {
 
         debug!("Setting led high");
         led.set_high().unwrap();
-        delay.delay_ms(5000_u32);              
+        delay.delay_ms(2000_u32);
 
         debug!("Setting led low");
         led.set_low().unwrap();
         delay.delay_ms(500_u32);
-
-        panic!("frob");
     }
 }
