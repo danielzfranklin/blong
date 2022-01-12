@@ -30,3 +30,7 @@ Configure wireshark to not require root
 ```
 
 Finally, reboot.
+
+# General project setup advice
+
+https://github.com/knurling-rs/app-template#setup

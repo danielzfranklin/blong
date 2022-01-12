@@ -27,3 +27,12 @@ Create the file `/etc/udev/rules.d/99-stlink.rules` with
 SUBSYSTEMS=="usb", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="3748", MODE="777"
 
 ```
+
+## Install dependencies
+
+- `sudo apt-get install gcc-arm-none-eabi`
+- `cargo install probe-run`
+- `cargo install cargo-flash`
+- `cargo install cargo-binutils && rustup component add llvm-tools-preview`
+- `cargo install flip-link`
+
