@@ -24,6 +24,11 @@ incremental = false
 opt-level = 3 # <-
 overflow-checks = true # <-
 
+# but do optimize all the other dependencies
+[profile.dev.package."*"]
+codegen-units = 1 # better optimizations
+opt-level = "z"
+
 # cargo test
 [profile.test]
 codegen-units = 1
@@ -32,6 +37,11 @@ debug-assertions = true # <-
 incremental = false
 opt-level = 3 # <-
 overflow-checks = true # <-
+
+# but do optimize all the other dependencies
+[profile.test.package."*"]
+codegen-units = 1 # better optimizations
+opt-level = "z"
 
 # cargo build/run --release
 [profile.release]
