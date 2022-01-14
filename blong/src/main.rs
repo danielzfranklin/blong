@@ -3,39 +3,89 @@
 
 use blong as _; // global logger + panicking-behavior + memory layout
 
-use nrf52840_hal as hal;
+// This logs decimals seconds
+defmt::timestamp!("{=u32:us}", app::monotonics::MonoDefault::now().ticks());
 
-use hal::delay::Delay;
-use hal::gpio::Level;
-use hal::pac::{CorePeripherals, Peripherals};
-use hal::prelude::*;
+#[rtic::app(
+    device = hal::pac,
+    peripherals = true,
+    dispatchers = [TIMER1]
+)]
+mod app {
+    use blong::timer::MonoTimer;
+    #[allow(unused_imports)]
+    use defmt::{debug, error, info, warn, Format};
 
-use cortex_m_rt::entry;
+    use nrf52840_hal as hal;
 
-#[allow(unused_imports)]
-use defmt::{debug, error, info, warn, Format};
+    use hal::gpiote::Gpiote;
+    use hal::pac::TIMER0;
 
-#[entry]
-fn main() -> ! {
-    let p = Peripherals::take().unwrap();
-    let core = CorePeripherals::take().unwrap();
+    // A monotonic timer to enable scheduling in RTIC
+    #[monotonic(binds = TIMER0, default = true)]
+    type MonoDefault = MonoTimer<TIMER0>;
 
-    let port0 = hal::gpio::p0::Parts::new(p.P0);
-    let mut led = port0.p0_06.into_push_pull_output(Level::Low);
+    #[shared]
+    struct Shared {}
 
-    let mut delay = Delay::new(core.SYST);
-
-    info!("Starting");
-
-    for _ in 0..5 {
-        debug!("Setting led high");
-        led.set_high().unwrap();
-        delay.delay_ms(2000_u32);
-
-        debug!("Setting led low");
-        led.set_low().unwrap();
-        delay.delay_ms(500_u32);
+    #[local]
+    struct Local {
+        gpiote: Gpiote,
     }
 
-    blong::exit();
+    #[init]
+    fn init(mut cx: init::Context) -> (Shared, Local, init::Monotonics) {
+        // Setup timers
+        let mono_default = MonoTimer::new(cx.device.TIMER0);
+
+        // Setup sleep
+        //   Set the ARM SLEEPONEXIT bit to go to sleep after handling interrupts.
+        //   See https://developer.arm.com/docs/100737/0100/power-management/sleep-mode/sleep-on-exit-bit
+        cx.core.SCB.set_sleepdeep();
+
+        let port0 = hal::gpio::p0::Parts::new(cx.device.P0);
+        let gpiote = Gpiote::new(cx.device.GPIOTE);
+
+        // Setup button
+        let btn_pin = port0.p0_29.into_pullup_input();
+        gpiote
+            .channel0()
+            .input_pin(&btn_pin.degrade())
+            .hi_to_lo()
+            .enable_interrupt();
+
+        // Spawn task, runs right after init finishes
+        startup::spawn().unwrap();
+
+        (Shared {}, Local { gpiote }, init::Monotonics(mono_default))
+    }
+
+    // Background task, runs whenever no other tasks are running
+    #[idle]
+    fn idle(_: idle::Context) -> ! {
+        loop {
+            // Wait For Interrupt is used instead of a busy-wait loop
+            // to allow MCU to sleep between interrupts, since we set
+            // SLEEPONEXIT in init.
+            // https://developer.arm.com/documentation/ddi0406/c/Application-Level-Architecture/Instruction-Details/Alphabetical-list-of-instructions/WFI
+            rtic::export::wfi();
+        }
+    }
+
+    // Software task, also not bound to a hardware interrupt
+    #[task]
+    fn startup(_cx: startup::Context) {
+        info!("Starting up");
+    }
+
+    #[task(binds = GPIOTE, local = [gpiote])]
+    fn on_gpiote(cx: on_gpiote::Context) {
+        let gpiote = cx.local.gpiote;
+
+        if gpiote.channel0().is_event_triggered() {
+            debug!("Button press");
+        }
+
+        gpiote.reset_events();
+    }
 }
