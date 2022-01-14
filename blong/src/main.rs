@@ -47,10 +47,9 @@ mod app {
         let gpiote = Gpiote::new(cx.device.GPIOTE);
 
         // Setup button
-        let btn_pin = port0.p0_29.into_pullup_input();
         gpiote
             .channel0()
-            .input_pin(&btn_pin.degrade())
+            .input_pin(&port0.p0_29.into_pullup_input().degrade())
             .hi_to_lo()
             .enable_interrupt();
 
