@@ -2,7 +2,7 @@
 name = "blong"
 version = "0.0.1"
 authors = ["daniel@danielzfranklin.org"]
-edition = "2018"
+edition = "2021"
 
 [[bin]]
 name = "blong"
@@ -80,6 +80,8 @@ defmt-test = "0.3.0"
 cortex-m-rtic = "1.0.0"
 systick-monotonic = "1.0.0"
 fugit = "0.3.3"
+apa102-spi = "0.3.2"
+smart-leds-trait = "0.2.1"
 
 [dependencies.embedded-hal]
 version = "0.2.6"

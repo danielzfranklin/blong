@@ -12,6 +12,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "apa102-spi"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d92cd690fd2aae5bc549e2dc392d9082aab3ccf851aa39b0ab84b2934f4c57a3"
+dependencies = [
+ "embedded-hal",
+ "smart-leds-trait",
+]
+
+[[package]]
 name = "atomic-polyfill"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -70,6 +80,7 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 name = "blong"
 version = "0.0.1"
 dependencies = [
+ "apa102-spi",
  "cortex-m",
  "cortex-m-rt",
  "cortex-m-rtic",
@@ -81,6 +92,7 @@ dependencies = [
  "nrf52840-hal",
  "panic-halt",
  "panic-probe",
+ "smart-leds-trait",
  "systick-monotonic",
 ]
 
@@ -519,6 +531,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f497285884f3fcff424ffc933e56d7cbca511def0c9831a7f9b5f6153e3cc89b"
 
 [[package]]
+name = "rgb"
+version = "0.8.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a374af9a0e5fdcdd98c1c7b64f05004f9ea2555b6c75f211daa81268a3c50f1"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "riscv"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -592,6 +613,15 @@ name = "semver-parser"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
+
+[[package]]
+name = "smart-leds-trait"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebf6d833fa93f16a1c1874e62c2aebe8567e5bdd436d59bf543ed258b6f7a8e3"
+dependencies = [
+ "rgb",
+]
 
 [[package]]
 name = "spin"
