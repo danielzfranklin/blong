@@ -80,7 +80,18 @@ defmt-test = "0.3.0"
 cortex-m-rtic = "1.0.0"
 systick-monotonic = "1.0.0"
 fugit = "0.3.3"
+rubble = { git = "https://github.com/jonas-schievink/rubble", features = [
+    "log"
+] }
+rubble-nrf5x = { git = "https://github.com/jonas-schievink/rubble", features = [
+    "52840"
+] }
+log = { version = "0.4.8", default-features = false }
+alloc-cortex-m = "0.4.2"
 
 [dependencies.embedded-hal]
 version = "0.2.6"
 features = ["unproven"]
+
+[patch."https://github.com/jonas-schievink/rubble"]
+rubble = { git = "https://github.com/danielzfranklin/rubble" }
