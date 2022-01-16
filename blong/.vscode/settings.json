@@ -1,4 +1,5 @@
 {
-    "rust-analyzer.cargo.target": "thumbv7em-none-eabihf",
-    "rust-analyzer.checkOnSave.allTargets": false
+    "rust-analyzer.cargo.target": "thumbv6m-none-eabi",
+    "rust-analyzer.checkOnSave.allTargets": false,
+    "editor.formatOnSave": true
 }
