@@ -1,60 +1,92 @@
 #![no_std]
 #![no_main]
 
-use cortex_m_rt::entry;
-use defmt::*;
 use defmt_rtt as _;
-use embedded_hal::digital::v2::OutputPin;
-use embedded_time::fixed_point::FixedPoint;
 use panic_probe as _;
-use rp_pico as bsp;
 
-use bsp::hal::{
-    clocks::{init_clocks_and_plls, Clock},
-    pac,
-    sio::Sio,
-    watchdog::Watchdog,
-};
+#[rtic::app(device = rp_pico::hal::pac, peripherals = true)]
+mod app {
+    use embedded_hal::digital::v2::OutputPin;
+    use embedded_time::duration::Extensions;
+    use rp_pico as bsp;
 
-#[entry]
-fn main() -> ! {
-    info!("Program start");
-    let mut pac = pac::Peripherals::take().unwrap();
-    let core = pac::CorePeripherals::take().unwrap();
-    let mut watchdog = Watchdog::new(pac.WATCHDOG);
-    let sio = Sio::new(pac.SIO);
+    #[allow(unused)]
+    use defmt::{debug, error, info, panic, trace, warn};
 
-    // External high-speed crystal on the pico board is 12Mhz
-    let external_xtal_freq_hz = 12_000_000u32;
-    let clocks = init_clocks_and_plls(
-        external_xtal_freq_hz,
-        pac.XOSC,
-        pac.CLOCKS,
-        pac.PLL_SYS,
-        pac.PLL_USB,
-        &mut pac.RESETS,
-        &mut watchdog,
-    )
-    .ok()
-    .unwrap();
+    use bsp::{
+        hal::{self, clocks::init_clocks_and_plls, watchdog::Watchdog, Sio},
+        XOSC_CRYSTAL_FREQ,
+    };
 
-    let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer());
+    const SCAN_TIME_US: u32 = 1000000;
 
-    let pins = bsp::Pins::new(
-        pac.IO_BANK0,
-        pac.PADS_BANK0,
-        sio.gpio_bank0,
-        &mut pac.RESETS,
-    );
+    #[shared]
+    struct Shared {
+        timer: hal::Timer,
+        alarm: hal::timer::Alarm0,
+        led: hal::gpio::Pin<hal::gpio::pin::bank0::Gpio25, hal::gpio::PushPullOutput>,
+    }
 
-    let mut led_pin = pins.led.into_push_pull_output();
+    #[local]
+    struct Local {}
 
-    loop {
-        info!("on!");
-        led_pin.set_high().unwrap();
-        delay.delay_ms(500);
-        info!("off!");
-        led_pin.set_low().unwrap();
-        delay.delay_ms(500);
+    #[init]
+    fn init(c: init::Context) -> (Shared, Local, init::Monotonics) {
+        info!("init");
+
+        let mut resets = c.device.RESETS;
+        let mut watchdog = Watchdog::new(c.device.WATCHDOG);
+        let _clocks = init_clocks_and_plls(
+            XOSC_CRYSTAL_FREQ,
+            c.device.XOSC,
+            c.device.CLOCKS,
+            c.device.PLL_SYS,
+            c.device.PLL_USB,
+            &mut resets,
+            &mut watchdog,
+        )
+        .ok()
+        .unwrap();
+
+        let sio = Sio::new(c.device.SIO);
+        let pins = rp_pico::Pins::new(
+            c.device.IO_BANK0,
+            c.device.PADS_BANK0,
+            sio.gpio_bank0,
+            &mut resets,
+        );
+        let mut led = pins.led.into_push_pull_output();
+        led.set_low().unwrap();
+
+        let mut timer = hal::Timer::new(c.device.TIMER, &mut resets);
+        let mut alarm = timer.alarm_0().unwrap();
+        let _ = alarm.schedule(SCAN_TIME_US.microseconds());
+        alarm.enable_interrupt(&mut timer);
+
+        (Shared { timer, alarm, led }, Local {}, init::Monotonics())
+    }
+
+    #[task(
+        binds = TIMER_IRQ_0,
+        priority = 1,
+        shared = [timer, alarm, led],
+        local = [tog: bool = true],
+    )]
+    fn timer_irq(mut c: timer_irq::Context) {
+        if *c.local.tog {
+            c.shared.led.lock(|l| l.set_high().unwrap());
+            debug!("Toggled on");
+        } else {
+            c.shared.led.lock(|l| l.set_low().unwrap());
+            debug!("Toggled off");
+        }
+        *c.local.tog = !*c.local.tog;
+
+        let timer = c.shared.timer;
+        let alarm = c.shared.alarm;
+        (timer, alarm).lock(|t, a| {
+            a.clear_interrupt(t);
+            let _ = a.schedule(SCAN_TIME_US.microseconds());
+        });
     }
 }
