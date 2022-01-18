@@ -16,6 +16,13 @@ defmt-rtt = "0.3.1"
 panic-probe = { version = "0.3.0", features = ["print-defmt"] }
 rp-pico = "0.3.0"
 cortex-m-rtic = "1.0.0"
+ascii = { version = "1.0.0", default-features = false }
+nb = "1.0.0"
+rp2040-monotonic = "1.0.1"
+fugit = "0.3.3"
+nmea-parser = "0.9.0"
+alloc-cortex-m = "0.4.2"
+heapless = "0.7.9"
 
 [patch.crates-io]
 rp-pico = { git = "https://github.com/rp-rs/rp-hal", rev = "bae3f2c9bc2a5b6e95af55122441ab115f1d4153" }
