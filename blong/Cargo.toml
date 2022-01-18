@@ -7,15 +7,18 @@ version = "0.1.0"
 resolver = "2"
 
 [dependencies]
-cortex-m = "0.7.3"
-cortex-m-rt = "0.7.0"
-embedded-hal = { version = "0.2.5", features = ["unproven"] }
-embedded-time = "0.12.0"
+cortex-m = "0.7.4"
+cortex-m-rt = "0.7.1"
+embedded-hal = { version = "0.2.6", features = ["unproven"] }
+embedded-time = "0.12.1"
 defmt = "0.3.0"
-defmt-rtt = "0.3.0"
+defmt-rtt = "0.3.1"
 panic-probe = { version = "0.3.0", features = ["print-defmt"] }
-rp-pico = "0.2.0"
+rp-pico = "0.3.0"
 cortex-m-rtic = "1.0.0"
+
+[patch.crates-io]
+rp-pico = { git = "https://github.com/rp-rs/rp-hal", rev = "bae3f2c9bc2a5b6e95af55122441ab115f1d4153" }
 
 # cargo build/run
 [profile.dev]

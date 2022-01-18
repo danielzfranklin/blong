@@ -530,9 +530,8 @@ dependencies = [
 
 [[package]]
 name = "rp-pico"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99fc2d1b3bf764c02ee395e520dad1953377e7d68af56713620365e43f27cf29"
+version = "0.3.0"
+source = "git+https://github.com/rp-rs/rp-hal?rev=bae3f2c9bc2a5b6e95af55122441ab115f1d4153#bae3f2c9bc2a5b6e95af55122441ab115f1d4153"
 dependencies = [
  "cortex-m",
  "cortex-m-rt",
@@ -555,9 +554,8 @@ dependencies = [
 
 [[package]]
 name = "rp2040-hal"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4cc5eed93ae7e2432580923fc5d5797c14b2bf215e1ab84e828f211881393b9"
+version = "0.4.0"
+source = "git+https://github.com/rp-rs/rp-hal?rev=bae3f2c9bc2a5b6e95af55122441ab115f1d4153#bae3f2c9bc2a5b6e95af55122441ab115f1d4153"
 dependencies = [
  "cortex-m",
  "critical-section",
