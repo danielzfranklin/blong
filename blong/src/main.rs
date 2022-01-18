@@ -18,13 +18,9 @@ mod app {
         XOSC_CRYSTAL_FREQ,
     };
 
-    const SCAN_TIME_US: u32 = 1000000;
-
     #[shared]
     struct Shared {
-        timer: hal::Timer,
-        alarm: hal::timer::Alarm0,
-        led: hal::gpio::Pin<hal::gpio::pin::bank0::Gpio25, hal::gpio::PushPullOutput>,
+        indicator: hal::gpio::Pin<hal::gpio::pin::bank0::Gpio25, hal::gpio::PushPullOutput>,
     }
 
     #[local]
@@ -55,15 +51,10 @@ mod app {
             sio.gpio_bank0,
             &mut resets,
         );
-        let mut led = pins.led.into_push_pull_output();
-        led.set_low().unwrap();
 
-        let mut timer = hal::Timer::new(c.device.TIMER, &mut resets);
-        let mut alarm = timer.alarm_0().unwrap();
-        let _ = alarm.schedule(SCAN_TIME_US.microseconds());
-        alarm.enable_interrupt(&mut timer);
+        let mut indicator = pins.led.into_push_pull_output();
+        indicator.set_low().unwrap();
 
-        (Shared { timer, alarm, led }, Local {}, init::Monotonics())
     }
 
     #[task(
@@ -88,5 +79,6 @@ mod app {
             a.clear_interrupt(t);
             let _ = a.schedule(SCAN_TIME_US.microseconds());
         });
+        (Shared { indicator }, Local {}, init::Monotonics())
     }
 }
