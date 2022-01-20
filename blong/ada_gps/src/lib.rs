@@ -1,4 +1,8 @@
-use crate::prelude::*;
+#![no_std]
+
+#[allow(unused)]
+pub use defmt::{debug, error, info, trace, warn};
+
 use ascii::AsciiStr;
 use core::fmt::Write;
 use defmt::Debug2Format;
@@ -69,5 +73,14 @@ impl Gps {
 impl Default for Gps {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn it_works() {
+        let result = 2 + 2;
+        assert_eq!(result, 4);
     }
 }
