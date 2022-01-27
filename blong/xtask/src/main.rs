@@ -9,6 +9,7 @@ fn main() -> Result<(), anyhow::Error> {
         ["flash"] => flash(),
         ["run"] => run_app(),
         ["check", "all"] => check_all(),
+        ["test", "ada-gps"] => test_ada_gps(),
         ["test", "target"] => test_target(),
         _ => {
             println!("Unsupported");
@@ -20,6 +21,12 @@ fn main() -> Result<(), anyhow::Error> {
 fn run_app() -> Result<(), anyhow::Error> {
     let _p = pushd_app()?;
     cmd!("cargo run").run()?;
+    Ok(())
+}
+
+fn test_ada_gps() -> Result<(), anyhow::Error> {
+    let _p = pushd_ada_gps()?;
+    cmd!("cargo test").run()?;
     Ok(())
 }
 
@@ -63,6 +70,10 @@ fn pushd_cross() -> Result<Pushd, anyhow::Error> {
 
 fn pushd_app() -> Result<Pushd, anyhow::Error> {
     xshell::pushd(root_dir().join("cross").join("app")).map_err(|e| e.into())
+}
+
+fn pushd_ada_gps() -> Result<Pushd, anyhow::Error> {
+    xshell::pushd(root_dir().join("ada_gps")).map_err(|e| e.into())
 }
 
 fn root_dir() -> PathBuf {
