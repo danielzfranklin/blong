@@ -32,6 +32,8 @@ use rtt_target::rtt_init;
 #[global_allocator]
 static ALLOCATOR: CortexMHeap = CortexMHeap::empty();
 
+// The pico has 264KB of SRAM
+
 #[alloc_error_handler]
 fn oom(_: Layout) -> ! {
     panic!("oom")
@@ -42,7 +44,7 @@ fn oom(_: Layout) -> ! {
 unsafe fn init_allocator() {
     crate::ALLOCATOR.init(
         cortex_m_rt::heap_start() as usize,
-        2_usize.pow(18), // about 10% of the total memory
+        2_usize.pow(15), // about 12% of the total memory
     );
 }
 
@@ -169,10 +171,10 @@ fn init_needed_rtt() {
                 name: "Defmt"
             }
             1: {
-                // We block on buffer full with a massive buffer (2^17
-                // bytes, 5% of total memory) because we use this for
+                // We block on buffer full with a massive buffer (2^15
+                // bytes, 12% of total memory) because we use this for
                 // dumping complete traffic, where partial data is useless.
-                size: 131072
+                size: 32768
             }
         }
     };
