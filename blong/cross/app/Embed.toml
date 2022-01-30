@@ -1,0 +1,20 @@
+[default.general]
+chip = "RP2040"
+
+[default.rtt]
+# Whether or not an RTTUI should be opened after flashing.
+enabled = true
+# A list of channel associations to be displayed. If left empty, all channels are displayed.
+# formats are: String, Defmt, BinaryLE,
+channels = [{ up = 0, name = "defmt_rtt", format = "Defmt" }]
+
+[rtt-print.rtt]
+# This is useful for features that print stuff over rtt in addition to deft
+# - ada-gps raw uart traffic: cargo embed rtt-print --features board/rtt-print,ada-gps/rtt-print-traffic
+enabled = true
+channels = [
+    { up = 0, name = "defmt_rtt", format = "Defmt" },
+    { up = 1, name = "print", format = "String" },
+]
+log_enabled = true
+log_path = "../target/rtt-print"

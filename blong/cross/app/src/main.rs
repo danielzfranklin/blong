@@ -78,21 +78,19 @@ mod app {
             status_led,
         } = c.local;
 
-        gps.hot_restart().unwrap();
+        // gps.hot_restart().unwrap();
 
         info!("Ready");
         blink_status_led_for(status_led, 100_000_000);
         cortex_m::asm::delay(50_000_000);
 
-        let mut i = 0;
-        gps.read_logs(|count_estimate, point| {
-            // info!("Got point {}, expecting {}", point, count_estimate)
-            i += 1;
-            if point.temp_checksum != 0 {
-                info!("Checksum not zero: {}", i);
-            }
-        })
-        .unwrap();
+        gps.logger_status().unwrap();
+        // gps.read_logs(|count_estimate, i, point| {
+        //     // info!("Got point {}, expecting {}", point, count_estimate)
+        //     let percent = i as f32 / count_estimate as f32 * 100_f32;
+        //     info!("{}% ({}/{})", percent, i, count_estimate);
+        // })
+        // .unwrap();
 
         loop {
             cortex_m::asm::wfe();

@@ -1,0 +1,14 @@
+---
+source: ada_gps/src/logger/parser.rs
+assertion_line: 369
+expression: parser.stats
+
+---
+Stats {
+    sector_count: 32,
+    invalid_sectors: 0,
+    empty_sectors: 16,
+    invalid_packets: 0,
+    packets_parsed: 3819,
+    invalid_fields: 0,
+}

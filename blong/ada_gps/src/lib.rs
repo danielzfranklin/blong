@@ -4,13 +4,13 @@ extern crate alloc;
 
 mod cmd;
 mod integer_percent;
-mod locus;
 mod log_macros;
+pub mod logger;
+mod utc_date_time;
 
 pub use cmd::parse::Error as ParseError;
 pub use integer_percent::IntegerPercent;
-pub use locus::logged_point::{Error as ParseLoggedPointError, LoggedPoint};
-pub use locus::status::LoggerStatus;
+pub use utc_date_time::UtcDateTime;
 
 use alloc::vec::Vec;
 use bbqueue::BBBuffer;
@@ -96,7 +96,7 @@ where
         self.send_mtk_cmd(b"185", &[b"1"])
     }
 
-    pub fn logger_status(&mut self) -> Result<LoggerStatus, Error<Tx::Error>> {
+    pub fn logger_status(&mut self) -> Result<logger::Status, Error<Tx::Error>> {
         // PMTK_LOCUS_QUERY_STATUS
         // Interval mode: 8 (1 << 3)
         info!("Querying logger status");
@@ -128,7 +128,7 @@ where
             percent_field,
         );
 
-        let status = LoggerStatus {
+        let status = logger::Status {
             interval: cmd::parse::integer_field(interval_field)?,
             is_on: cmd::parse::bool_field(status_field, b"0", b"1")?,
             record_count: cmd::parse::integer_field(number_field)?,
@@ -140,62 +140,68 @@ where
         Ok(status)
     }
 
-    pub fn read_logs<F>(&mut self, mut on_point: F) -> Result<(), Error<Tx::Error>>
-    where
-        F: FnMut(usize, LoggedPoint) -> (),
-    {
-        info!("Reading logs");
+    /// `on_point` is called with `max_points`, `i`, and `point`. `max_points`
+    /// is the upper bound on the number of times `on_point` count will called.
+    /// `i` is the current point index (starting at zero).
+    // pub fn read_logs<F>(&mut self, mut on_point: F) -> Result<(), Error<Tx::Error>>
+    // where
+    //     F: FnMut(usize, usize, LoggedPoint) -> (),
+    // {
+    //     info!("Reading logs");
 
-        // NOTE: We don't retry because this is super expensive.
+    //     // NOTE: We don't retry because this is super expensive.
 
-        self.ensure_nmea_output_disabled()?;
+    //     self.ensure_nmea_output_disabled()?;
 
-        // PMTK_Q_LOCUS_DATA, 0 = full
-        //  I can't figure out how partial dumps work.
-        self.write_cmd_raw(b"PMTK622", &[b"0"])?;
+    //     // PMTK_Q_LOCUS_DATA, 0 = full
+    //     //  I can't figure out how partial dumps work.
+    //     self.write_cmd_raw(b"PMTK622", &[b"0"])?;
 
-        let locus_start = self.read_reply_raw(b"PMTKLOX", 2)?;
-        if locus_start[0] != b"0" {
-            error!("Expected LOCUS start packet");
-            return Err(Error::Protocol);
-        }
-        let packet_count: usize = cmd::parse::integer_field(&locus_start[1])?
-            .try_into()
-            .unwrap();
-        let point_count_estimate = packet_count * MAX_POINTS_PER_LOCUS_DATA_PACKET;
+    //     let locus_start = self.read_reply_raw(b"PMTKLOX", 2)?;
+    //     if locus_start[0] != b"0" {
+    //         error!("Expected LOCUS start packet");
+    //         return Err(Error::Protocol);
+    //     }
+    //     let packet_count: usize = cmd::parse::integer_field(&locus_start[1])?
+    //         .try_into()
+    //         .unwrap();
+    //     let max_points = packet_count * MAX_POINTS_PER_LOCUS_DATA_PACKET;
+    //     let mut point_i = 0;
 
-        for n in 0..packet_count {
-            let locus_data = self.read_reply_raw(b"PMTKLOX", 2)?;
+    //     for n in 0..packet_count {
+    //         let locus_data = self.read_reply_raw(b"PMTKLOX", 2)?;
 
-            if locus_data[0] != b"1" {
-                error!("Expected LOCUS data packet");
-                return Err(Error::Protocol);
-            }
+    //         if locus_data[0] != b"1" {
+    //             error!("Expected LOCUS data packet");
+    //             return Err(Error::Protocol);
+    //         }
 
-            let actual_n: usize = cmd::parse::integer_field(&locus_data[1])?
-                .try_into()
-                .unwrap();
-            if actual_n != n {
-                error!(
-                    "Expected LOCUS data packet number {}, got number {}",
-                    n, actual_n
-                );
-                return Err(Error::Protocol);
-            }
+    //         let actual_n: usize = cmd::parse::integer_field(&locus_data[1])?
+    //             .try_into()
+    //             .unwrap();
+    //         if actual_n != n {
+    //             error!(
+    //                 "Expected LOCUS data packet number {}, got number {}",
+    //                 n, actual_n
+    //             );
+    //             return Err(Error::Protocol);
+    //         }
 
-            locus::logged_point::parse_data_fields(&locus_data[2..], |point| {
-                on_point(point_count_estimate, point)
-            })?;
-        }
+    //         // TODO
+    //         //     locus::logged_point::parse_data_fields(&locus_data[2..], |point| {
+    //         //         on_point(max_points, point_i, point);
+    //         //         point_i += 1;
+    //         //     })?;
+    //     }
 
-        let locus_end = self.read_reply_raw(b"PMTKLOX", 2)?;
-        if locus_end[0] != b"2" {
-            error!("Expected LOCUS end packet");
-            return Err(Error::Protocol);
-        }
+    //     let locus_end = self.read_reply_raw(b"PMTKLOX", 1)?;
+    //     if locus_end[0] != b"2" {
+    //         error!("Expected LOCUS end packet");
+    //         return Err(Error::Protocol);
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     /// Restart keeping all saved data.
     pub fn hot_restart(&mut self) -> Result<(), Error<Tx::Error>> {
@@ -526,7 +532,7 @@ where
         trace!("Sending {=[u8]:a}", &cmd);
 
         #[cfg(feature = "rtt-print-traffic")]
-        rtt_target::rprint!(">{}", &cmd);
+        rtt_target::rprint!(">{}", &core::str::from_utf8(&cmd).unwrap());
 
         let mut delayed = 0;
         for byte in cmd {
@@ -615,7 +621,7 @@ where
         trace!("Received {=[u8]:a} (delayed {=u32:us})", &cmd, delayed);
 
         #[cfg(feature = "rtt-print-traffic")]
-        rtt_target::rprint!("<{}", &cmd);
+        rtt_target::rprint!("<{}", &core::str::from_utf8(&cmd).unwrap());
 
         cmd::parse(&cmd).map_err(Error::Parse)
     }
@@ -666,7 +672,6 @@ pub enum Error<TxError> {
     WriteTimeout,
     Transmit(TxError),
     Parse(ParseError),
-    ParseLoggedPoint(ParseLoggedPointError),
 }
 
 impl<TxError> From<ParseError> for Error<TxError> {
@@ -675,560 +680,555 @@ impl<TxError> From<ParseError> for Error<TxError> {
     }
 }
 
-impl<TxError> From<ParseLoggedPointError> for Error<TxError> {
-    fn from(err: ParseLoggedPointError) -> Self {
-        Self::ParseLoggedPoint(err)
-    }
-}
-
-#[cfg(all(test, not(target_os = "none")))]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_configure_logger_interval() {
-        let expects = [
-            MockTrans::write_many(b"$PMTK187,1,5*38\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK001,187,3*3E\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.configure_logger_interval(5).unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_erase_logs() {
-        let expects = [
-            MockTrans::write_many(b"$PMTK184,1*22\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK001,184,3*3D\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.erase_logs().unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_start_logging() {
-        let expects = [
-            MockTrans::write_many(b"$PMTK185,0*22\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK001,185,3*3C\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.start_logging().unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_stop_logging() {
-        let expects = [
-            MockTrans::write_many(b"$PMTK185,1*23\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK001,185,3*3C\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.stop_logging().unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_logger_status() {
-        let expects = [
-            MockTrans::write_many(b"$PMTK183*38\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTKLOG,456,0,11,31,2,0,0,0,3769,46*48\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        let actual = gps.logger_status().unwrap();
-        let expected = LoggerStatus {
-            interval: 2,
-            is_on: true,
-            record_count: 3769,
-            percent_full: IntegerPercent::new(46),
-        };
-        assert_eq!(actual, expected);
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_read_logs() {
-        todo!()
-    }
-
-    #[test]
-    fn test_hot_restart() {
-        let expects = [
-            // Factory reset
-            MockTrans::write_many(b"$PMTK101*32\r\n"),
-            MockTrans::flush(),
-            // Boot messages
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,103*50\r\n"),
-            MockTrans::read_many(b"$CDACK,105*56\r\n"),
-            MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
-            MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
-            MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
-            // Get firmware version
-            MockTrans::write_many(b"$PMTK605*31\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.hot_restart().unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_warn_restart() {
-        let expects = [
-            // Factory reset
-            MockTrans::write_many(b"$PMTK102*31\r\n"),
-            MockTrans::flush(),
-            // Boot messages
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,103*50\r\n"),
-            MockTrans::read_many(b"$CDACK,105*56\r\n"),
-            MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
-            MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
-            MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
-            // Get firmware version
-            MockTrans::write_many(b"$PMTK605*31\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.warm_restart().unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_cold_restart() {
-        let expects = [
-            // Factory reset
-            MockTrans::write_many(b"$PMTK103*30\r\n"),
-            MockTrans::flush(),
-            // Boot messages
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,103*50\r\n"),
-            MockTrans::read_many(b"$CDACK,105*56\r\n"),
-            MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
-            MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
-            MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
-            // Get firmware version
-            MockTrans::write_many(b"$PMTK605*31\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.cold_restart().unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_factory_reset() {
-        let expects = [
-            // Factory reset
-            MockTrans::write_many(b"$PMTK104*37\r\n"),
-            MockTrans::flush(),
-            // Boot messages
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,103*50\r\n"),
-            MockTrans::read_many(b"$CDACK,105*56\r\n"),
-            MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
-            MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
-            MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
-            // Get firmware version
-            MockTrans::write_many(b"$PMTK605*31\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.factory_reset().unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_send_reboot_cmd_when_first_try_fails() {
-        let expects = [
-            // Try 1
-            MockTrans::write_many(b"$PMTK104*37\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,103*50\r\n"),
-            MockTrans::read_many(b"$CDACK,105*56\r\n"),
-            MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
-            MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
-            // Missing PMTK011,MTKGPS
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            // Try 2
-            MockTrans::write_many(b"$PMTK104*37\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,103*50\r\n"),
-            MockTrans::read_many(b"$CDACK,105*56\r\n"),
-            MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
-            MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
-            MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
-            // Get firmware version
-            MockTrans::write_many(b"$PMTK605*31\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.send_reboot_cmd(b"PMTK104").unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_send_reboot_cmd_when_missing_mtkgps() {
-        let expects = [
-            // Try 1
-            MockTrans::write_many(b"$PMTK103*30\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,103*50\r\n"),
-            MockTrans::read_many(b"$CDACK,105*56\r\n"),
-            MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
-            MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
-            // Missing PMTK011,MTKGPS
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            // Try 2
-            MockTrans::write_many(b"$PMTK103*30\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,103*50\r\n"),
-            MockTrans::read_many(b"$CDACK,105*56\r\n"),
-            MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
-            MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
-            MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
-            // Get firmware version
-            MockTrans::write_many(b"$PMTK605*31\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.send_reboot_cmd(b"PMTK103").unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_send_reboot_cmd_retries_when_missing_boot_sys_msg() {
-        let expects = [
-            MockTrans::write_many(b"$PMTK104*37\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,103*50\r\n"),
-            MockTrans::read_many(b"$CDACK,105*56\r\n"),
-            // Missing PMTK010,001
-            MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
-            MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            // Try 2
-            MockTrans::write_many(b"$PMTK104*37\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,103*50\r\n"),
-            MockTrans::read_many(b"$CDACK,105*56\r\n"),
-            MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
-            MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
-            MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
-            // Get firmware version
-            MockTrans::write_many(b"$PMTK605*31\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.send_reboot_cmd(b"PMTK104").unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_send_reboot_cmd_retries_when_reading_firmware_fails() {
-        let expects = [
-            // Send PMTK_CMD_FULL_COLD_START
-            MockTrans::write_many(b"$PMTK104*37\r\n"),
-            MockTrans::flush(),
-            // Boot messages
-            MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
-            MockTrans::read_many(b"$CDACK,103*50\r\n"),
-            MockTrans::read_many(b"$CDACK,105*56\r\n"),
-            MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
-            MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
-            // Get firmware version try 1
-            MockTrans::write_many(b"$PMTK605*31\r\n"),
-            MockTrans::flush(),
-            // Spurious response
-            MockTrans::read_many(b"$CDACK,103*50\r\n"),
-            // Get firmware version try 2
-            MockTrans::write_many(b"$PMTK605*31\r\n"),
-            MockTrans::flush(),
-            // Firmware version response
-            MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.send_reboot_cmd(b"PMTK104").unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn nmea_disabled_on_first_cmd_only() {
-        let expects = [
-            // Disable nmea output
-            MockTrans::write_many(b"$PMTK314,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK001,314,3*36\r\n"),
-            // Erase logs
-            MockTrans::write_many(b"$PMTK184,1*22\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK001,184,3*3D\r\n"),
-            // Erase logs
-            MockTrans::write_many(b"$PMTK184,1*22\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK001,184,3*3D\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), false);
-
-        gps.erase_logs().unwrap();
-        gps.erase_logs().unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_send_pmtk_cmd() {
-        let expects = [
-            MockTrans::write_many(b"$PMTK187,10,5*08\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK001,187,3*3E\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.send_mtk_cmd(b"187", &[b"10", b"5"]).unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_send_pmtk_cmd_retries() {
-        let expects = [
-            // Try 1
-            MockTrans::write_many(b"$PMTK187,10,5*08\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"foo\r\n"),
-            // Try 2
-            MockTrans::write_many(b"$PMTK187,10,5*08\r\n"),
-            MockTrans::flush(),
-            MockTrans::read_many(b"$PMTK001,187,3*3E\r\n"),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.send_mtk_cmd(b"187", &[b"10", b"5"]).unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_read_pmtk_ack_raw_when_not_ack() {
-        let expects = [MockTrans::read_many(b"$PMTK002*30\r\n")];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        let actual = gps.read_pmtk_ack_raw(b"604");
-        assert_eq!(actual, Err(Error::Protocol));
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_read_pmtk_ack_raw_when_wrong_fields() {
-        let expects = [MockTrans::read_many(b"$PMTK001,600*29\r\n")];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        let actual = gps.read_pmtk_ack_raw(b"604");
-        assert_eq!(actual, Err(Error::Protocol));
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_read_pmtk_ack_raw_when_for_incorrect() {
-        let expects = [MockTrans::read_many(b"$PMTK001,600,3*36\r\n")];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        let actual = gps.read_pmtk_ack_raw(b"604");
-        assert_eq!(actual, Err(Error::Protocol));
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_read_pmtk_ack_raw_when_gps_says_invalid() {
-        let expects = [MockTrans::read_many(b"$PMTK001,600,0*35\r\n")];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        let actual = gps.read_pmtk_ack_raw(b"600");
-        assert_eq!(actual, Err(Error::GpsSaysInvalidCommand));
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_read_pmtk_ack_raw_when_gps_says_unsupported() {
-        let expects = [MockTrans::read_many(b"$PMTK001,600,1*34\r\n")];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        let actual = gps.read_pmtk_ack_raw(b"600");
-        assert_eq!(actual, Err(Error::GpsSaysUnsupportedCommand));
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_read_pmtk_ack_raw_when_gps_says_failed() {
-        let expects = [MockTrans::read_many(b"$PMTK001,600,2*37\r\n")];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        let actual = gps.read_pmtk_ack_raw(b"600");
-        assert_eq!(actual, Err(Error::GpsSaysActionFailed));
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_read_pmtk_ack_raw_for_correct() {
-        let expects = [MockTrans::read_many(b"$PMTK001,604,3*32\r\n")];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        gps.read_pmtk_ack_raw(b"604").unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_write_cmd_raw() {
-        let expects = [
-            MockTrans::write_many(b"$PMTK187,10,5*08\r\n"),
-            MockTrans::flush(),
-        ];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        let fields: Vec<&[u8]> = vec![b"10", b"5"];
-        gps.write_cmd_raw(b"PMTK187", &fields).unwrap();
-
-        mock.done();
-    }
-
-    #[test]
-    fn test_read_cmd_raw() {
-        let expects = [MockTrans::read_many(b"$PMTK187,10,5*08\r\n")];
-        let mut mock = MockSerial::new(&expects);
-        let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
-
-        let (actual_name, actual_fields) = gps.read_cmd_raw().unwrap();
-        let expected_name = b"PMTK187";
-        let expected_fields: Vec<&[u8]> = vec![b"10", b"5"];
-        assert_eq!(actual_name, expected_name);
-        assert_eq!(actual_fields, expected_fields);
-
-        mock.done();
-    }
-}
+// TODO: Translate all these tests to use the new input format
+// #[cfg(all(test, not(target_os = "none")))]
+// mod tests {
+//     use super::*;
+
+//     #[test]
+//     fn test_configure_logger_interval() {
+//         let expects = [
+//             MockTrans::write_many(b"$PMTK187,1,5*38\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK001,187,3*3E\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.configure_logger_interval(5).unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_erase_logs() {
+//         let expects = [
+//             MockTrans::write_many(b"$PMTK184,1*22\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK001,184,3*3D\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.erase_logs().unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_start_logging() {
+//         let expects = [
+//             MockTrans::write_many(b"$PMTK185,0*22\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK001,185,3*3C\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.start_logging().unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_stop_logging() {
+//         let expects = [
+//             MockTrans::write_many(b"$PMTK185,1*23\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK001,185,3*3C\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.stop_logging().unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_logger_status() {
+//         let expects = [
+//             MockTrans::write_many(b"$PMTK183*38\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTKLOG,456,0,11,31,2,0,0,0,3769,46*48\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         let actual = gps.logger_status().unwrap();
+//         let expected = LoggerStatus {
+//             interval: 2,
+//             is_on: true,
+//             record_count: 3769,
+//             percent_full: IntegerPercent::new(46),
+//         };
+//         assert_eq!(actual, expected);
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_read_logs() {
+//         todo!()
+//     }
+
+//     #[test]
+//     fn test_hot_restart() {
+//         let expects = [
+//             // Factory reset
+//             MockTrans::write_many(b"$PMTK101*32\r\n"),
+//             MockTrans::flush(),
+//             // Boot messages
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,103*50\r\n"),
+//             MockTrans::read_many(b"$CDACK,105*56\r\n"),
+//             MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
+//             MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
+//             MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
+//             // Get firmware version
+//             MockTrans::write_many(b"$PMTK605*31\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.hot_restart().unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_warn_restart() {
+//         let expects = [
+//             // Factory reset
+//             MockTrans::write_many(b"$PMTK102*31\r\n"),
+//             MockTrans::flush(),
+//             // Boot messages
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,103*50\r\n"),
+//             MockTrans::read_many(b"$CDACK,105*56\r\n"),
+//             MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
+//             MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
+//             MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
+//             // Get firmware version
+//             MockTrans::write_many(b"$PMTK605*31\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.warm_restart().unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_cold_restart() {
+//         let expects = [
+//             // Factory reset
+//             MockTrans::write_many(b"$PMTK103*30\r\n"),
+//             MockTrans::flush(),
+//             // Boot messages
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,103*50\r\n"),
+//             MockTrans::read_many(b"$CDACK,105*56\r\n"),
+//             MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
+//             MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
+//             MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
+//             // Get firmware version
+//             MockTrans::write_many(b"$PMTK605*31\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.cold_restart().unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_factory_reset() {
+//         let expects = [
+//             // Factory reset
+//             MockTrans::write_many(b"$PMTK104*37\r\n"),
+//             MockTrans::flush(),
+//             // Boot messages
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,103*50\r\n"),
+//             MockTrans::read_many(b"$CDACK,105*56\r\n"),
+//             MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
+//             MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
+//             MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
+//             // Get firmware version
+//             MockTrans::write_many(b"$PMTK605*31\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.factory_reset().unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_send_reboot_cmd_when_first_try_fails() {
+//         let expects = [
+//             // Try 1
+//             MockTrans::write_many(b"$PMTK104*37\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,103*50\r\n"),
+//             MockTrans::read_many(b"$CDACK,105*56\r\n"),
+//             MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
+//             MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
+//             // Missing PMTK011,MTKGPS
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             // Try 2
+//             MockTrans::write_many(b"$PMTK104*37\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,103*50\r\n"),
+//             MockTrans::read_many(b"$CDACK,105*56\r\n"),
+//             MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
+//             MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
+//             MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
+//             // Get firmware version
+//             MockTrans::write_many(b"$PMTK605*31\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.send_reboot_cmd(b"PMTK104").unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_send_reboot_cmd_when_missing_mtkgps() {
+//         let expects = [
+//             // Try 1
+//             MockTrans::write_many(b"$PMTK103*30\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,103*50\r\n"),
+//             MockTrans::read_many(b"$CDACK,105*56\r\n"),
+//             MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
+//             MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
+//             // Missing PMTK011,MTKGPS
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             // Try 2
+//             MockTrans::write_many(b"$PMTK103*30\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,103*50\r\n"),
+//             MockTrans::read_many(b"$CDACK,105*56\r\n"),
+//             MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
+//             MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
+//             MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
+//             // Get firmware version
+//             MockTrans::write_many(b"$PMTK605*31\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.send_reboot_cmd(b"PMTK103").unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_send_reboot_cmd_retries_when_missing_boot_sys_msg() {
+//         let expects = [
+//             MockTrans::write_many(b"$PMTK104*37\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,103*50\r\n"),
+//             MockTrans::read_many(b"$CDACK,105*56\r\n"),
+//             // Missing PMTK010,001
+//             MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
+//             MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             // Try 2
+//             MockTrans::write_many(b"$PMTK104*37\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,103*50\r\n"),
+//             MockTrans::read_many(b"$CDACK,105*56\r\n"),
+//             MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
+//             MockTrans::read_many(b"$PMTK010,002*2D\r\n"),
+//             MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
+//             // Get firmware version
+//             MockTrans::write_many(b"$PMTK605*31\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.send_reboot_cmd(b"PMTK104").unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_send_reboot_cmd_retries_when_reading_firmware_fails() {
+//         let expects = [
+//             // Send PMTK_CMD_FULL_COLD_START
+//             MockTrans::write_many(b"$PMTK104*37\r\n"),
+//             MockTrans::flush(),
+//             // Boot messages
+//             MockTrans::read_many(b"$CDACK,34,0*79\r\n"),
+//             MockTrans::read_many(b"$CDACK,103*50\r\n"),
+//             MockTrans::read_many(b"$CDACK,105*56\r\n"),
+//             MockTrans::read_many(b"$PMTK011,MTKGPS*08\r\n"),
+//             MockTrans::read_many(b"$PMTK010,001*2E\r\n"),
+//             // Get firmware version try 1
+//             MockTrans::write_many(b"$PMTK605*31\r\n"),
+//             MockTrans::flush(),
+//             // Spurious response
+//             MockTrans::read_many(b"$CDACK,103*50\r\n"),
+//             // Get firmware version try 2
+//             MockTrans::write_many(b"$PMTK605*31\r\n"),
+//             MockTrans::flush(),
+//             // Firmware version response
+//             MockTrans::read_many(b"$PMTK705,AXN_1.3,2102,ABCD,*11\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.send_reboot_cmd(b"PMTK104").unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn nmea_disabled_on_first_cmd_only() {
+//         let expects = [
+//             // Disable nmea output
+//             MockTrans::write_many(b"$PMTK314,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK001,314,3*36\r\n"),
+//             // Erase logs
+//             MockTrans::write_many(b"$PMTK184,1*22\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK001,184,3*3D\r\n"),
+//             // Erase logs
+//             MockTrans::write_many(b"$PMTK184,1*22\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK001,184,3*3D\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), false);
+
+//         gps.erase_logs().unwrap();
+//         gps.erase_logs().unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_send_pmtk_cmd() {
+//         let expects = [
+//             MockTrans::write_many(b"$PMTK187,10,5*08\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK001,187,3*3E\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.send_mtk_cmd(b"187", &[b"10", b"5"]).unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_send_pmtk_cmd_retries() {
+//         let expects = [
+//             // Try 1
+//             MockTrans::write_many(b"$PMTK187,10,5*08\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"foo\r\n"),
+//             // Try 2
+//             MockTrans::write_many(b"$PMTK187,10,5*08\r\n"),
+//             MockTrans::flush(),
+//             MockTrans::read_many(b"$PMTK001,187,3*3E\r\n"),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.send_mtk_cmd(b"187", &[b"10", b"5"]).unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_read_pmtk_ack_raw_when_not_ack() {
+//         let expects = [MockTrans::read_many(b"$PMTK002*30\r\n")];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         let actual = gps.read_pmtk_ack_raw(b"604");
+//         assert_eq!(actual, Err(Error::Protocol));
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_read_pmtk_ack_raw_when_wrong_fields() {
+//         let expects = [MockTrans::read_many(b"$PMTK001,600*29\r\n")];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         let actual = gps.read_pmtk_ack_raw(b"604");
+//         assert_eq!(actual, Err(Error::Protocol));
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_read_pmtk_ack_raw_when_for_incorrect() {
+//         let expects = [MockTrans::read_many(b"$PMTK001,600,3*36\r\n")];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         let actual = gps.read_pmtk_ack_raw(b"604");
+//         assert_eq!(actual, Err(Error::Protocol));
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_read_pmtk_ack_raw_when_gps_says_invalid() {
+//         let expects = [MockTrans::read_many(b"$PMTK001,600,0*35\r\n")];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         let actual = gps.read_pmtk_ack_raw(b"600");
+//         assert_eq!(actual, Err(Error::GpsSaysInvalidCommand));
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_read_pmtk_ack_raw_when_gps_says_unsupported() {
+//         let expects = [MockTrans::read_many(b"$PMTK001,600,1*34\r\n")];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         let actual = gps.read_pmtk_ack_raw(b"600");
+//         assert_eq!(actual, Err(Error::GpsSaysUnsupportedCommand));
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_read_pmtk_ack_raw_when_gps_says_failed() {
+//         let expects = [MockTrans::read_many(b"$PMTK001,600,2*37\r\n")];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         let actual = gps.read_pmtk_ack_raw(b"600");
+//         assert_eq!(actual, Err(Error::GpsSaysActionFailed));
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_read_pmtk_ack_raw_for_correct() {
+//         let expects = [MockTrans::read_many(b"$PMTK001,604,3*32\r\n")];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         gps.read_pmtk_ack_raw(b"604").unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_write_cmd_raw() {
+//         let expects = [
+//             MockTrans::write_many(b"$PMTK187,10,5*08\r\n"),
+//             MockTrans::flush(),
+//         ];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         let fields: Vec<&[u8]> = vec![b"10", b"5"];
+//         gps.write_cmd_raw(b"PMTK187", &fields).unwrap();
+
+//         mock.done();
+//     }
+
+//     #[test]
+//     fn test_read_cmd_raw() {
+//         let expects = [MockTrans::read_many(b"$PMTK187,10,5*08\r\n")];
+//         let mut mock = MockSerial::new(&expects);
+//         let mut gps = Gps::new(mock.clone(), mock.clone(), NoopDelay::new(), true);
+
+//         let (actual_name, actual_fields) = gps.read_cmd_raw().unwrap();
+//         let expected_name = b"PMTK187";
+//         let expected_fields: Vec<&[u8]> = vec![b"10", b"5"];
+//         assert_eq!(actual_name, expected_name);
+//         assert_eq!(actual_fields, expected_fields);
+
+//         mock.done();
+//     }
+// }

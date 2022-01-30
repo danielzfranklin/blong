@@ -152,8 +152,7 @@ fn init_needed_rtt() {
         up: {
             0: {
                 size: 1024
-                mode: NoBlockSkip
-                name: "Defmt"
+                name: "defmt_rtt"
             }
         }
     };
