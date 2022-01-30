@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn test_valid() {
         let (actual_name, actual_fields) =
-            parse_cmd(b"$PMTK314,1,10,1,1,1,5,0,0,0,0,0,0,0,0,0,0,0,0,0*1C\r\n").unwrap();
+            parse(b"$PMTK314,1,10,1,1,1,5,0,0,0,0,0,0,0,0,0,0,0,0,0*1C\r\n").unwrap();
 
         let expected_name = b"PMTK314";
         assert_eq!(actual_name, expected_name);
@@ -153,7 +153,7 @@ mod tests {
         assert_eq!(actual_fields, expected_fields);
 
         // Test parsing no fields
-        let (actual_name, actual_fields) = parse_cmd(b"$PMTK183*38\r\n").unwrap();
+        let (actual_name, actual_fields) = parse(b"$PMTK183*38\r\n").unwrap();
 
         let expected_name = b"PMTK183";
         assert_eq!(actual_name, expected_name);
@@ -164,24 +164,24 @@ mod tests {
 
     #[test]
     fn test_invalid() {
-        assert_eq!(parse_cmd(b""), Err(Error::ExpectedPrefix));
-        assert_eq!(parse_cmd(b"foo"), Err(Error::ExpectedPrefix));
+        assert_eq!(parse(b""), Err(Error::ExpectedPrefix));
+        assert_eq!(parse(b"foo"), Err(Error::ExpectedPrefix));
 
-        assert_eq!(parse_cmd(b"$"), Err(Error::ExpectedName));
-        assert_eq!(parse_cmd(b"$*"), Err(Error::ExpectedName));
-        assert_eq!(parse_cmd(b"$NAME"), Err(Error::ExpectedName));
+        assert_eq!(parse(b"$"), Err(Error::ExpectedName));
+        assert_eq!(parse(b"$*"), Err(Error::ExpectedName));
+        assert_eq!(parse(b"$NAME"), Err(Error::ExpectedName));
 
-        assert_eq!(parse_cmd(b"$NAME,"), Err(Error::ExpectedField));
-        assert_eq!(parse_cmd(b"$NAME,\r\n"), Err(Error::ExpectedField));
+        assert_eq!(parse(b"$NAME,"), Err(Error::ExpectedField));
+        assert_eq!(parse(b"$NAME,\r\n"), Err(Error::ExpectedField));
 
-        assert_eq!(parse_cmd(b"$NAME,*"), Err(Error::ExpectedChecksum));
-        assert_eq!(parse_cmd(b"$NAME,*0"), Err(Error::ExpectedChecksum));
+        assert_eq!(parse(b"$NAME,*"), Err(Error::ExpectedChecksum));
+        assert_eq!(parse(b"$NAME,*0"), Err(Error::ExpectedChecksum));
 
-        assert_eq!(parse_cmd(b"$NAME,*zz"), Err(Error::ChecksumParse));
+        assert_eq!(parse(b"$NAME,*zz"), Err(Error::ChecksumParse));
 
-        assert_eq!(parse_cmd(b"$NAME,*0f"), Err(Error::ExpectedSuffix));
-        assert_eq!(parse_cmd(b"$NAME,*0f\r"), Err(Error::ExpectedSuffix));
+        assert_eq!(parse(b"$NAME,*0f"), Err(Error::ExpectedSuffix));
+        assert_eq!(parse(b"$NAME,*0f\r"), Err(Error::ExpectedSuffix));
 
-        assert_eq!(parse_cmd(b"$NAME,*0f\r\n"), Err(Error::WrongChecksum));
+        assert_eq!(parse(b"$NAME,*0f\r\n"), Err(Error::WrongChecksum));
     }
 }
